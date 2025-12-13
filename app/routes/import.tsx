@@ -222,11 +222,38 @@ function Tool() {
 
         const jobId = response.data.job_id;
         toast.success("NetworkX Graph Generated!", {
-          description: `Job ID: ${jobId}`,
+          description: (
+            <div className="flex flex-col gap-2">
+              <p>Job ID: {jobId}</p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  navigator.clipboard.writeText(jobId);
+                  toast.success("Copied to clipboard!");
+                }}
+              >
+                Copy Job ID
+              </Button>
+            </div>
+          ),
+          duration: 5000,
         });
 
-        // Redirect to dashboard with Job ID
-        window.location.href = `/?job_id=${jobId}&writer=networkx`;
+        // Delay redirect slightly to allow user to see/copy, or rely on them seeing it on dashboard?
+        // User asked for copy "before it redirect" or "popup... then show job id".
+        // A Toast with a button is good.
+        // Let's create a small delay or just redirect. The user said "before it redirect there is a popup".
+        // The toast will persist for a bit or until clicked if we configure it?
+        // Actually, if we redirect, the toast might survive if it conflicts with navigation.
+        // But usually, navigating refreshes the page or unmounts components.
+        // This is Remix. Navigation to `/?job_id=...` might re-render.
+        // Let's use `navigate` instead of `window.location.href` to be SPA-friendly and keep the toast alive.
+
+        setTimeout(() => {
+          // Redirect to dashboard with Job ID
+          navigate(`/?job_id=${jobId}&writer=networkx`);
+        }, 2000);
         return;
       }
 

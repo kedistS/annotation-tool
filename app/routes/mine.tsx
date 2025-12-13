@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
-import { BrainCircuit, Download, Loader2, FileCode } from "lucide-react";
+import { Pickaxe, Download, Loader2, FileCode } from "lucide-react";
 
 export const meta: MetaFunction = () => {
   return [
@@ -105,7 +105,7 @@ export default function Mine() {
     <div className="container mx-auto py-8 max-w-4xl">
       <div className="flex items-center gap-4 mb-8">
         <div>
-          <BrainCircuit size={48} className="text-primary" />
+          <Pickaxe size={48} className="text-primary" />
         </div>
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Neural Subgraph Miner</h1>
@@ -286,7 +286,7 @@ export default function Mine() {
                 </>
               ) : (
                 <>
-                  <BrainCircuit className="mr-2 h-4 w-4" /> Start Mining
+                  <Pickaxe className="mr-2 h-4 w-4" /> Start Mining
                 </>
               )}
             </Button>
