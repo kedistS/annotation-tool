@@ -15,3 +15,12 @@ export const loaderAPI = axios.create({
       : window.ENV?.LOADER_URL,
   timeout: 0,
 });
+
+export const integrationAPI = axios.create({
+  baseURL:
+    // @ts-ignore
+    typeof window === "undefined"
+      ? process.env?.INTEGRATION_URL
+      : window.ENV?.INTEGRATION_URL,
+  timeout: 0,
+});

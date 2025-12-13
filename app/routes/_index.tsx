@@ -3,7 +3,7 @@ import {
   LoaderFunctionArgs,
   MetaFunction,
 } from "@remix-run/node";
-import { Link, useLoaderData } from "@remix-run/react";
+import { Link, useLoaderData, useSearchParams } from "@remix-run/react";
 import dayjs from "dayjs";
 import { loaderAPI } from "~/api";
 import { ClientOnly } from "remix-utils/client-only";
@@ -11,8 +11,11 @@ import Bar from "~/components/bar.client";
 import Chord from "~/components/chord.client";
 import Graph from "~/components/graph";
 import { useMemo } from "react";
-import { CloudUpload, Plus } from "lucide-react";
+import { CloudUpload, Plus, Pickaxe, Copy, Check } from "lucide-react";
 import { Button } from "~/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
+import { toast } from "sonner";
+import { useState } from "react";
 import ErrorBoundaryContent from "~/components/error-boundary";
 
 export interface SummaryData {
@@ -58,6 +61,20 @@ export const loader: LoaderFunction = async ({
 
 export default function () {
   const data: SummaryData = useLoaderData<typeof loader>();
+  const [searchParams] = useSearchParams();
+  const [copied, setCopied] = useState(false);
+
+  const jobId = searchParams.get("job_id");
+  const writer = searchParams.get("writer");
+
+  const copyJobId = () => {
+    if (jobId) {
+      navigator.clipboard.writeText(jobId);
+      setCopied(true);
+      toast.success("Job ID copied to clipboard");
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   const colorMapping = useMemo(() => {
     if (!data.schema.nodes) return;
@@ -97,6 +114,12 @@ export default function () {
           </p>
         </div>
         <div className="grid gap-2 grid-flow-col">
+
+          <Link to={`/mine${jobId ? `?job_id=${jobId}` : ''}`}>
+            <Button variant="secondary" className="gap-2">
+              <Pickaxe className="h-4 w-4" /> Mine Patterns
+            </Button>
+          </Link>
           <Link to="/import">
             <Button variant="outline">
               <CloudUpload /> Upload data sources
@@ -109,6 +132,35 @@ export default function () {
           </Link>
         </div>
       </div>
+
+      {jobId && writer === "networkx" && (
+        <Card className="mb-8 border-green-500 bg-green-500/10">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-green-700 flex items-center gap-2">
+              Success: NetworkX Graph Generated!
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Job ID:</p>
+                <div className="flex items-center gap-2">
+                  <code className="bg-background/50 px-2 py-1 rounded border">{jobId}</code>
+                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={copyJobId}>
+                    {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                  </Button>
+                </div>
+              </div>
+              <Link to={`/mine?job_id=${jobId}`}>
+                <Button className="bg-green-600 hover:bg-green-700 text-white">
+                  Proceed to Mining <Pickaxe className="ml-2 h-4 w-4" />
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-3 gap-6 mb-6">
         <div className="border border-dashed rounded-lg p-4">
           <h2 className="font-bold mb-4">Top entities</h2>
@@ -170,7 +222,7 @@ export default function () {
               rankSep: 20,
               edgeSep: 0,
               rankDir: "LR",
-            }}
+            } as any}
           ></Graph>
         </div>
       </div>

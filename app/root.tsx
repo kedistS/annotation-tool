@@ -17,6 +17,7 @@ import {
   Settings,
   Shapes,
   Sun,
+  Pickaxe,
 } from "lucide-react";
 import { Toaster } from "./components/ui/sonner";
 import RelativeTime from "dayjs/plugin/relativeTime";
@@ -58,8 +59,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const API_URL = process.env.API_URL || "";
   const ANNOTATION_URL = process.env.ANNOTATION_URL || "";
   const LOADER_URL = process.env.LOADER_URL || "";
+  const INTEGRATION_URL = process.env.INTEGRATION_URL || "http://localhost:9000";
   return json({
-    ENV: { API_URL, ANNOTATION_URL, LOADER_URL },
+    ENV: { API_URL, ANNOTATION_URL, LOADER_URL, INTEGRATION_URL },
     theme: getTheme(),
     schema,
   });
@@ -148,6 +150,18 @@ export function LayoutContent({ children }: { children: React.ReactNode }) {
                 </NavLink>
               </li>
               <li>
+                <NavLink to="/mine" className={c}>
+                  <Tooltip>
+                    <TooltipTrigger className="p-0" asChild>
+                      <Pickaxe size={24} />
+                    </TooltipTrigger>
+                    <TooltipContent side="right" sideOffset={12}>
+                      Mine Patterns
+                    </TooltipContent>
+                  </Tooltip>
+                </NavLink>
+              </li>
+              <li className="mt-auto">
                 <NavLink to="/settings" className={c}>
                   <Tooltip>
                     <TooltipTrigger className="p-0" asChild>
@@ -186,8 +200,8 @@ export function LayoutContent({ children }: { children: React.ReactNode }) {
                   : {},
                 forms: data?.schema?.nodes
                   ? data.schema.nodes.reduce((acc: any, n: any) => {
-                      return { ...acc, [n.name]: n.inputs };
-                    }, {})
+                    return { ...acc, [n.name]: n.inputs };
+                  }, {})
                   : {},
               }}
             >

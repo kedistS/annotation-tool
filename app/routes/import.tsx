@@ -13,7 +13,7 @@ import {
 import { Play, Sparkles } from "lucide-react";
 import { useContext, useState } from "react";
 import { toast } from "sonner";
-import { loaderAPI } from "~/api";
+import { loaderAPI, integrationAPI } from "~/api";
 import { Button } from "~/components/ui/button";
 import { Label } from "~/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "~/components/ui/radio-group";
@@ -72,7 +72,10 @@ function Tool() {
   const { dataSources, setDataSources, isValid, schema } = useContext(Context);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
-  const [writer, setWriter] = useState<"metta" | "neo4j" | "mork">("metta");
+  const [writer, setWriter] = useState<"metta" | "neo4j" | "mork" | "networkx">(
+    "metta"
+  );
+  const [graphType, setGraphType] = useState<"directed" | "undirected">("directed");
   const [initialSchema, setInitialSchema] = useState<Schema | undefined>();
 
   function removeSource(id: string) {
@@ -201,6 +204,33 @@ function Tool() {
 
     try {
       setBusy(true);
+
+      if (writer === "networkx") {
+        // NetworkX Submission
+        const networkXFormData = new FormData();
+        for (const source of dataSources) {
+          networkXFormData.append("files", source.file);
+        }
+        networkXFormData.append("config", JSON.stringify(config));
+        networkXFormData.append("schema_json", JSON.stringify(outputSchema));
+        networkXFormData.append("writer_type", writer);
+        networkXFormData.append("graph_type", graphType);
+
+        const response = await integrationAPI.post("/api/generate-graph", networkXFormData, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+
+        const jobId = response.data.job_id;
+        toast.success("NetworkX Graph Generated!", {
+          description: `Job ID: ${jobId}`,
+        });
+
+        // Redirect to dashboard with Job ID
+        window.location.href = `/?job_id=${jobId}&writer=networkx`;
+        return;
+      }
+
+      // Default Loader Submission
       await loaderAPI.post("api/load", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
@@ -209,6 +239,7 @@ function Tool() {
       });
       navigate("/");
     } catch (e) {
+      console.error(e);
       toast.error("Could not import data", {
         description:
           "Something is wrong with the schema construction or the files could not be uploaded",
@@ -315,7 +346,31 @@ function Tool() {
               <RadioGroupItem value="mork" id="mork" />
               <Label htmlFor="mork">Mork</Label>
             </div>
+            <div className="flex items-center gap-3">
+              <RadioGroupItem value="networkx" id="networkx" />
+              <Label htmlFor="networkx">NetworkX</Label>
+            </div>
           </RadioGroup>
+
+          {writer === "networkx" && (
+            <>
+              <p className="text-sm font-bold mb-2">Graph Type:</p>
+              <RadioGroup
+                className="px-2 mb-6 flex"
+                defaultValue={graphType}
+                onValueChange={(v) => setGraphType(v as typeof graphType)}
+              >
+                <div className="flex items-center gap-3">
+                  <RadioGroupItem value="directed" id="directed" />
+                  <Label htmlFor="directed">Directed</Label>
+                </div>
+                <div className="flex items-center gap-3">
+                  <RadioGroupItem value="undirected" id="undirected" />
+                  <Label htmlFor="undirected">Undirected</Label>
+                </div>
+              </RadioGroup>
+            </>
+          )}
 
           <Button
             className="w-full shadow-lg"
@@ -340,7 +395,7 @@ function Tool() {
 export default function () {
   const [dataSources, setDataSources] = useState<DataSource[]>([]);
   const [isValid, setIsValid] = useState<boolean>(false);
-  const [schema, setSchema] = useState<Schema>(null);
+  const [schema, setSchema] = useState<Schema>(null as any);
 
   return (
     <Context.Provider
