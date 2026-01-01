@@ -10,12 +10,12 @@ import { ClientOnly } from "remix-utils/client-only";
 import Bar from "~/components/bar.client";
 import Chord from "~/components/chord.client";
 import Graph from "~/components/graph";
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { CloudUpload, Plus, Pickaxe, Copy, Check, BrainCircuit } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { toast } from "sonner";
-import { useState } from "react";
+
 import ErrorBoundaryContent from "~/components/error-boundary";
 
 export interface SummaryData {
@@ -49,7 +49,10 @@ export interface SummaryData {
 export const loader: LoaderFunction = async ({
   request,
 }: LoaderFunctionArgs) => {
-  const data: SummaryData = (await loaderAPI.get("api/kg-info", {})).data;
+  const url = new URL(request.url);
+  const jobId = url.searchParams.get("job_id");
+
+  const data: SummaryData = (await loaderAPI.get(`api/kg-info/${jobId || ''}`, {})).data;
   data.top_entities = data.top_entities
     .sort((a, b) => b.count - a.count)
     .slice(0, 10);
@@ -75,6 +78,14 @@ export default function () {
       setTimeout(() => setCopied(false), 2000);
     }
   };
+
+  useEffect(() => {
+    if (jobId) {
+      // Silently re-assert the selection in the backend
+      // This counters background Mork generation that might be running
+      loaderAPI.post("api/select-job", { job_id: jobId }).catch(console.error);
+    }
+  }, [jobId]);
 
   const colorMapping = useMemo(() => {
     if (!data.schema.nodes) return;
