@@ -2,7 +2,7 @@ import { json, type MetaFunction } from "@remix-run/node";
 import { useSearchParams, useNavigate } from "@remix-run/react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { integrationAPI, annotationAPI } from "~/api";
+import { integrationAPI, annotationAPI, loaderAPI } from "~/api";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 
@@ -24,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
-import { Pickaxe, Download, Loader2, FileCode } from "lucide-react";
+import { Pickaxe, Download, Loader2, FileCode, ArrowRight, Network } from "lucide-react";
 
 export const meta: MetaFunction = () => {
   return [
@@ -67,60 +67,57 @@ export default function Mine() {
 
   useEffect(() => {
     const initData = async () => {
-      // 1. Hydrate from LocalStorage immediately
-      let localData: any[] = [];
-      try {
-        const saved = localStorage.getItem("neurograph_history");
-        if (saved) {
-          localData = JSON.parse(saved);
-          setHistory(localData);
+      const urlJobId = searchParams.get("job_id");
 
-          // Set default Job ID if not already set by URL
-          setJobId(prev => {
-            if (prev) return prev;
-            if (localData.length > 0) return localData[0].annotation_id;
-            return "";
-          });
+      try {
+        const res = await loaderAPI.get("api/history");
+        const { selected_job_id, history } = res.data;
+
+        let targetJobId = urlJobId || selected_job_id;
+
+        if (history && history.length > 0) {
+          // If we have a targetJobId, look for its NetworkX brother
+          let bestMatch = null;
+          // If we have a targetJobId, check if it's Mork and if there's a NetworkX brother
+          if (targetJobId) {
+            const currentJob = history.find((h: any) => h.job_id === targetJobId);
+            if (currentJob?.writer_type === 'mork') {
+              // Seek NetworkX brother from the same import batch (within 30s)
+              const brother = history.find((h: any) =>
+                h.writer_type === 'networkx' &&
+                Math.abs(dayjs(h.imported_on).diff(dayjs(currentJob.imported_on), 'second')) < 60
+              );
+              bestMatch = brother || currentJob;
+            } else {
+              bestMatch = currentJob;
+            }
+          }
+
+          //  Take the most recent NetworkX graph in existence
+          if (!bestMatch) {
+            bestMatch = history.find((h: any) => h.writer_type === 'networkx') || history[0];
+          }
+
+          if (bestMatch) {
+            setJobId(bestMatch.job_id);
+          }
         }
-      } catch (e) { console.error("Local history error", e); }
 
-      // 2. Fetch fresh data from API
-      try {
-        const res = await annotationAPI.get("/history");
-        const apiData = res.data || [];
-
-        // Merge API history with LocalStorage
-        const combined = new Map();
-
-        // Add local first
-        localData.forEach((h: any) => combined.set(h.annotation_id, h));
-
-        // Overwrite/Add API data
-        apiData.forEach((h: any) => combined.set(h.annotation_id, { ...combined.get(h.annotation_id), ...h }));
-
-        const sorted = Array.from(combined.values()).sort((a: any, b: any) =>
-          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        );
-
-        setHistory(sorted);
-        // Update local storage with fresh data
-        localStorage.setItem("neurograph_history", JSON.stringify(sorted.slice(0, 20))); // Keep last 20
-
-        // Update Job ID again if it was still empty (e.g., local was empty but API has data)
-        setJobId(prev => {
-          if (prev) return prev;
-          if (sorted.length > 0) return sorted[0].annotation_id;
-          return "";
-        });
+        if (history) {
+          setHistory(history);
+        }
 
       } catch (e) {
-        console.error("Failed to load history", e);
+        console.error("Failed to load history from loader", e);
+        toast.error("Connection error", {
+          description: "Could not fetch your graph library."
+        });
       } finally {
         setLoadingHistory(false);
       }
     };
     initData();
-  }, []);
+  }, [searchParams]);
 
   const startMining = async () => {
     if (!jobId) {
@@ -188,7 +185,7 @@ export default function Mine() {
 
       intervalId = setInterval(async () => {
         try {
-          // Note: accessing Integration Service via integrationAPI (Loader URL)
+          //  accessing Integration Service via integrationAPI (Loader URL)
           const res = await integrationAPI.get(`/api/mining-status/${jobId}`);
           const data = res.data;
 
@@ -208,6 +205,13 @@ export default function Mine() {
       if (intervalId) clearInterval(intervalId);
     };
   }, [isMining, jobId]);
+
+  const activeGraph = history.find(h => h.job_id === jobId && h.writer_type === 'networkx')
+    || history.find(h => h.job_id === jobId);
+
+  const graphDisplayName = activeGraph
+    ? `${activeGraph.writer_type.charAt(0).toUpperCase() + activeGraph.writer_type.slice(1)} Graph - ${activeGraph.node_count.toLocaleString()} nodes`
+    : (jobId ? "Selected Graph" : "No graph selected");
 
   return (
     <div className="container mx-auto py-8 max-w-4xl">
@@ -232,33 +236,35 @@ export default function Mine() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
-            <div className="grid gap-4">
-              <Label>Select Graph to Mine</Label>
-              <Select value={jobId} onValueChange={setJobId}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select a graph" />
-                </SelectTrigger>
-                <SelectContent>
-                  {history.map((h: any) => (
-                    <SelectItem key={h.annotation_id} value={h.annotation_id}>
-                      {h.title || "Untitled Graph"} <span className="text-muted-foreground text-xs ml-2">({dayjs(h.created_at).fromNow()})</span>
-                    </SelectItem>
-                  ))}
-                  {history.length === 0 && !loadingHistory && (
-                    <SelectItem value="none" disabled>No graphs found</SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-
-              {/* Show selected graph details if available */}
-              {jobId && history.find(h => h.annotation_id === jobId)?.node_count && (
-                <div className="text-xs text-muted-foreground mt-1 flex gap-2">
-                  <>
-                    <span>Nodes: {history.find(h => h.annotation_id === jobId)?.node_count}</span>
-                    <span>Edges: {history.find(h => h.annotation_id === jobId)?.edge_count}</span>
-                  </>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold text-foreground/70 uppercase tracking-wider">
+                  Active Knowledge Graph
+                </Label>
+                <div className="p-4 rounded-xl border border-primary/20 bg-primary/5 flex items-center justify-between shadow-inner">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-primary/10 rounded-lg">
+                      <Pickaxe className="text-primary" size={20} />
+                    </div>
+                    <div>
+                      <p className="font-bold text-foreground">
+                        {loadingHistory ? "Loading graph..." : graphDisplayName}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">
+                        {activeGraph ? `Imported ${dayjs(activeGraph.imported_on).fromNow()}` : "Select a graph to start mining"}
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs text-primary hover:text-primary hover:bg-primary/10 transition-colors"
+                    onClick={() => navigate("/settings")}
+                  >
+                    Change Graph
+                  </Button>
                 </div>
-              )}
+              </div>
             </div>
 
             <Accordion type="single" collapsible defaultValue="advanced">
@@ -421,8 +427,8 @@ export default function Mine() {
 
                     <div className="space-y-2">
                       <div className="w-full bg-secondary h-3 rounded-full overflow-hidden border border-border">
-                        <div 
-                          className="bg-green-600 h-full transition-all duration-500 ease-in-out shadow-[0_0_10px_rgba(22,163,74,0.5)]" 
+                        <div
+                          className="bg-green-600 h-full transition-all duration-500 ease-in-out shadow-[0_0_10px_rgba(22,163,74,0.5)]"
                           style={{ width: `${miningProgress}%` }}
                         />
                       </div>

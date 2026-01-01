@@ -25,7 +25,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "~/components/ui/tooltip";
-import { PostImportDialog } from "~/components/post-import-dialog";
 
 
 interface Config {
@@ -79,12 +78,6 @@ function Tool() {
     "metta"
   );
   const [graphType, setGraphType] = useState<"directed" | "undirected">("directed");
-
-
-
-  // Post-Import Dialog State
-  const [showNameDialog, setShowNameDialog] = useState(false);
-  const [generatedJobId, setGeneratedJobId] = useState("");
 
   const [initialSchema, setInitialSchema] = useState<Schema | undefined>();
 
@@ -230,12 +223,8 @@ function Tool() {
           headers: { "Content-Type": "multipart/form-data" },
         });
 
-        const jobId = response.data.job_id;
-
-        // Open Dialog instead of immediate redirect
-        setGeneratedJobId(jobId);
-        setShowNameDialog(true);
-        // Do NOT redirect yet
+        toast.success("Graph generated successfully!");
+        navigate(`/?job_id=${response.data.job_id}`);
         return;
       }
 
@@ -258,50 +247,7 @@ function Tool() {
     }
   }
 
-  const handleNameSave = async (name: string) => {
-    // 1. Check for duplicates locally first
-    const savedHistory = JSON.parse(localStorage.getItem("neurograph_history") || "[]");
-    const exists = savedHistory.some((h: any) => h.title?.toLowerCase() === name.trim().toLowerCase());
 
-    if (exists) {
-      toast.error("Name already exists", {
-        description: "Please choose a unique name for your graph."
-      });
-      return;
-    }
-
-    // 2. Fire-and-forget API call (don't await)
-    annotationAPI.put(`/annotation/${generatedJobId}/title`, { title: name })
-      .catch(err => console.error("Background save failed", err));
-
-    // 3. Instant Local Update & Redirect
-    finalizeImport(name);
-  };
-
-  const handleSkip = () => {
-    finalizeImport("Untitled Graph");
-  };
-
-  const finalizeImport = (title: string) => {
-    // Save to LocalStorage for instant access
-    const newGraph = {
-      annotation_id: generatedJobId,
-      title: title,
-      created_at: new Date().toISOString(),
-      node_count: 0, // Placeholder
-      edge_count: 0, // Placeholder
-      isLocal: true,
-    };
-    const savedHistory = JSON.parse(localStorage.getItem("neurograph_history") || "[]");
-    localStorage.setItem("neurograph_history", JSON.stringify([newGraph, ...savedHistory]));
-
-    setShowNameDialog(false);
-    navigate("/");
-
-    toast.success("Graph ready!", {
-      description: `Imported as ${title}`
-    });
-  };
 
   return (
     <div className="h-full w-full flex">
@@ -441,12 +387,7 @@ function Tool() {
           </Button>
         </div>
 
-        <PostImportDialog
-          isOpen={showNameDialog}
-          jobId={generatedJobId}
-          onSave={handleNameSave}
-          onSkip={handleSkip}
-        />
+
       </div>
       <div className="relative w-full h-full">
         <SchemaBuilder

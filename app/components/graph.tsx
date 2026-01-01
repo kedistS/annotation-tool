@@ -60,7 +60,7 @@ interface PopperInstance {
 interface BaseCytoscapeGraphProps extends CytoscapeOptions {
   elements: ElementsDefinition;
   filters?: string[];
-  style?: StylesheetCSS[];
+  style?: any[];
   children?: React.ReactNode;
   colorMapping: any;
   onRender?: (graph: cytoscape.Core) => void;
@@ -77,13 +77,13 @@ export default function Graph(props: BaseCytoscapeGraphProps) {
   const popperRef = useRef<PopperInstance>();
   const popup = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
-  const [selectedNode, setSelectedNode] = useState<Element>();
+  const [selectedNode, setSelectedNode] = useState<any>();
   const updatePopupPosition = () => popperRef.current?.update();
   const selectNode = (e: any) => setSelectedNode(e.target);
   const unselectNode = () => setSelectedNode(undefined);
   const [theme] = useTheme();
 
-  const style: StylesheetCSS[] = useMemo(() => {
+  const style: any[] = useMemo(() => {
     const bg = convert(colors.slate[950], "hex");
     const gray = convert(colors.slate[theme == Theme.DARK ? 600 : 300], "hex");
 
@@ -369,9 +369,8 @@ const ContextMenu = ({
         </>
       )}
       <table
-        className={`w-full border-y text-left text-sm ${
-          nodes.length == 1 && "mb-4"
-        }`}
+        className={`w-full border-y text-left text-sm ${nodes.length == 1 && "mb-4"
+          }`}
       >
         <thead className="border-y">
           {table.getHeaderGroups().map((headerGroup) => (
@@ -381,9 +380,9 @@ const ContextMenu = ({
                   {header.isPlaceholder
                     ? null
                     : flexRender(
-                        header.column.columnDef.header,
-                        header.getContext()
-                      )}
+                      header.column.columnDef.header,
+                      header.getContext()
+                    )}
                 </th>
               ))}
             </tr>
