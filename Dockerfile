@@ -1,8 +1,11 @@
 FROM node:20.15.0-alpine
 WORKDIR /usr/server/app
 
-COPY ./package.json ./
-RUN npm install
+COPY package*.json ./
+RUN npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm install
 COPY ./ .
 RUN npm run build
 ENV NODE_ENV=production

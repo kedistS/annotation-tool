@@ -7,6 +7,7 @@ import {
   Scripts,
   ScrollRestoration,
   useLoaderData,
+  useLocation,
   useNavigation,
 } from "@remix-run/react";
 import {
@@ -76,6 +77,7 @@ export function LayoutContent({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useTheme();
   const data: any = useLoaderData<typeof loader>();
   const navigation = useNavigation();
+  const location = useLocation();
 
   const c = ({
     isActive,
@@ -191,7 +193,7 @@ export function LayoutContent({ children }: { children: React.ReactNode }) {
               {theme === Theme.DARK ? <Sun /> : <Moon />}
             </Button>
           </div>
-          <div className="relative flex-grow overflow-y-auto">
+          <div className="relative flex-grow overflow-y-auto" key={location.pathname + location.search}>
             <QueryBuilderContext.Provider
               value={{
                 nodeDefinitions:
