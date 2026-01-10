@@ -48,6 +48,7 @@ export default function Mine() {
   const [sampleMethod, setSampleMethod] = useState("tree");
   const [graphType, setGraphType] = useState("directed");
   const [outputFormat, setOutputFormat] = useState("representative");
+  const [outBatchSize, setOutBatchSize] = useState("10");
 
   const [isMining, setIsMining] = useState(false);
   const [miningResult, setMiningResult] = useState<{
@@ -142,6 +143,7 @@ export default function Mine() {
       formData.append("sample_method", sampleMethod);
       formData.append("graph_type", graphType);
       formData.append("graph_output_format", outputFormat);
+      formData.append("out_batch_size", outBatchSize);
 
       // Call the Integration Service API with FormData
       const response = await integrationAPI.post("/api/mine-patterns", formData);
@@ -397,6 +399,21 @@ export default function Mine() {
                           <SelectItem value="instance">Instances</SelectItem>
                         </SelectContent>
                       </Select>
+                    </div>
+
+                    <div className="space-y-2 md:col-span-2">
+                      <Label htmlFor="out-batch-size">Output Batch Size (Top K)</Label>
+                      <Input
+                        id="out-batch-size"
+                        type="number"
+                        min={1}
+                        value={outBatchSize}
+                        onChange={(e) => setOutBatchSize(e.target.value)}
+                        placeholder="10"
+                      />
+                      <p className="text-[10px] text-muted-foreground">
+                        Number of top patterns to return/visualize per size category.
+                      </p>
                     </div>
                   </div>
                 </AccordionContent>
