@@ -48,7 +48,7 @@ export default function Mine() {
   const [sampleMethod, setSampleMethod] = useState("tree");
   const [graphType, setGraphType] = useState("directed");
   const [outputFormat, setOutputFormat] = useState("representative");
-  const [outBatchSize, setOutBatchSize] = useState("10");
+  const [outBatchSize, setOutBatchSize] = useState("3");
 
   const [isMining, setIsMining] = useState(false);
   const [miningResult, setMiningResult] = useState<{
@@ -56,10 +56,9 @@ export default function Mine() {
     patternsCount?: number;
   } | null>(null);
 
-  // New Progress State
+  // Progress State
   const [miningProgress, setMiningProgress] = useState(0);
   const [miningStatus, setMiningStatus] = useState("Initializing...");
-  const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
 
   // History State
   const [history, setHistory] = useState<any[]>([]);
@@ -168,43 +167,75 @@ export default function Mine() {
       });
     } finally {
       setIsMining(false);
-      // Stop polling
-      if (pollInterval) {
-        clearInterval(pollInterval);
-        setPollInterval(null);
-      }
     }
   };
 
-  // Poll for progress updates
+  // WebSocket for real-time progress updates
   useEffect(() => {
-    let intervalId: NodeJS.Timeout;
+    let ws: WebSocket | null = null;
 
     if (isMining && jobId) {
       // Reset progress
       setMiningProgress(0);
-      setMiningStatus("Starting miner...");
+      setMiningStatus("Connecting to progress stream...");
 
-      intervalId = setInterval(async () => {
-        try {
-          //  accessing Integration Service via integrationAPI (Loader URL)
-          const res = await integrationAPI.get(`/api/mining-status/${jobId}`);
-          const data = res.data;
+      // Determine WebSocket URL 
+      const wsBaseUrl = integrationAPI.defaults.baseURL?.replace('http', 'ws') || 'ws://localhost:9000';
+      const wsUrl = `${wsBaseUrl}/api/ws/mining-progress/${jobId}`;
 
-          if (data) {
-            setMiningProgress(data.progress || 0);
-            if (data.message) setMiningStatus(data.message);
+      console.log(`[WebSocket] Connecting to: ${wsUrl}`);
+
+      try {
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          console.log("[WebSocket] Connected to progress stream");
+          setMiningStatus("Mining in progress...");
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            console.log("[WebSocket] Progress update:", data);
+
+            // Update progress state
+            if (data.progress !== undefined) {
+              setMiningProgress(data.progress);
+            }
+            if (data.message) {
+              setMiningStatus(data.message);
+            }
+
+            // Close connection when completed
+            if (data.status === 'completed' || data.progress >= 100) {
+              console.log("[WebSocket] Mining completed");
+              if (ws) ws.close();
+            }
+          } catch (e) {
+            console.warn("[WebSocket] Failed to parse message:", e);
           }
-        } catch (e) {
-          console.warn("Failed to poll progress", e);
-        }
-      }, 1000);
+        };
 
-      setPollInterval(intervalId);
+        ws.onerror = (error) => {
+          console.error("[WebSocket] Error:", error);
+          setMiningStatus("Connection error - please check browser console");
+        };
+
+        ws.onclose = () => {
+          console.log("[WebSocket] Connection closed");
+        };
+
+      } catch (error) {
+        console.error("[WebSocket] Failed to establish connection:", error);
+        setMiningStatus("Failed to connect to progress stream");
+      }
     }
 
     return () => {
-      if (intervalId) clearInterval(intervalId);
+      if (ws) {
+        console.log("[WebSocket] Cleaning up connection");
+        ws.close();
+      }
     };
   }, [isMining, jobId]);
 
