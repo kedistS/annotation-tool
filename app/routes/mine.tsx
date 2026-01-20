@@ -1,6 +1,6 @@
 import { json, type MetaFunction } from "@remix-run/node";
 import { useSearchParams, useNavigate } from "@remix-run/react";
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { integrationAPI, annotationAPI, loaderAPI } from "~/api";
 import dayjs from "dayjs";
@@ -174,35 +174,105 @@ export default function Mine() {
     }
   };
 
-  // Poll for progress updates
+  //Only render time-dependent content on the client
+  const [isMounted, setIsMounted] = useState(false);
   useEffect(() => {
-    let intervalId: NodeJS.Timeout;
+    setIsMounted(true);
+  }, []);
+
+  // WebSocket for progress updates
+  useEffect(() => {
+    let socket: WebSocket | null = null;
+    let fallbackInterval: NodeJS.Timeout | null = null;
 
     if (isMining && jobId) {
       // Reset progress
       setMiningProgress(0);
-      setMiningStatus("Starting miner...");
+      setMiningStatus("Connecting to miner...");
 
-      intervalId = setInterval(async () => {
+      try {
+        // Construct WebSocket URL from integrationAPI baseURL
+        const baseUrl = integrationAPI.defaults.baseURL || "http://localhost:9000";
+        const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+
+        // Handle both relative and absolute URLs
+        let wsUrl = baseUrl.startsWith('http')
+          ? baseUrl.replace(/^http/, wsProtocol)
+          : `${wsProtocol}://${window.location.host}${baseUrl}`;
+
+        // Ensure /api prefix if not present
+        if (!wsUrl.includes("/api")) {
+          wsUrl = wsUrl.replace(/\/$/, "") + "/api";
+        }
+
+        const finalUrl = `${wsUrl}/ws/mining-progress/${jobId}`;
+        console.log(`[WebSocket] Connecting to: ${finalUrl}`);
+
+        socket = new WebSocket(finalUrl);
+
+        socket.onopen = () => {
+          console.log("[WebSocket] Connection established");
+          setMiningStatus("Connected. Waiting for miner...");
+        };
+
+        socket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.progress !== undefined) {
+              setMiningProgress(data.progress);
+            }
+            if (data.message) {
+              setMiningStatus(data.message);
+            }
+          } catch (err) {
+            console.error("[WebSocket] Failed to parse message:", err);
+          }
+        };
+
+        socket.onerror = (error) => {
+          console.error("[WebSocket] Error:", error);
+          setMiningStatus("Connection error. Switching to polling...");
+          // Fallback to polling
+          startPolling();
+        };
+
+        socket.onclose = (event) => {
+          console.log(`[WebSocket] Connection closed (code: ${event.code})`);
+          if (!event.wasClean && !fallbackInterval) {
+            startPolling();
+          }
+        };
+      } catch (err) {
+        console.error("[WebSocket] Initialization failed:", err);
+        startPolling();
+      }
+    }
+
+    function startPolling() {
+      if (fallbackInterval) return;
+      console.log("[WebSocket] Starting polling fallback");
+      fallbackInterval = setInterval(async () => {
         try {
-          //  accessing Integration Service via integrationAPI (Loader URL)
           const res = await integrationAPI.get(`/api/mining-status/${jobId}`);
-          const data = res.data;
-
-          if (data) {
-            setMiningProgress(data.progress || 0);
-            if (data.message) setMiningStatus(data.message);
+          if (res.data) {
+            setMiningProgress(res.data.progress || 0);
+            if (res.data.message) setMiningStatus(res.data.message);
           }
         } catch (e) {
-          console.warn("Failed to poll progress", e);
+          console.warn("Polling failed", e);
         }
-      }, 1000);
-
-      setPollInterval(intervalId);
+      }, 2000);
     }
 
     return () => {
-      if (intervalId) clearInterval(intervalId);
+      if (socket) {
+        console.log("[WebSocket] Cleaning up WebSocket connection");
+        socket.close();
+      }
+      if (fallbackInterval) {
+        console.log("[WebSocket] Cleaning up polling fallback");
+        clearInterval(fallbackInterval);
+      }
     };
   }, [isMining, jobId]);
 
@@ -251,7 +321,7 @@ export default function Mine() {
                         {loadingHistory ? "Loading graph..." : graphDisplayName}
                       </p>
                       <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">
-                        {activeGraph ? `Imported ${dayjs(activeGraph.imported_on).fromNow()}` : "Select a graph to start mining"}
+                        {activeGraph ? (isMounted ? `Imported ${dayjs(activeGraph.imported_on).fromNow()}` : "Imported recently") : "Select a graph to start mining"}
                       </p>
                     </div>
                   </div>
@@ -339,11 +409,11 @@ export default function Mine() {
                     <div className="space-y-2">
                       <Label htmlFor="strategy">Search Strategy</Label>
                       <Select
-                        value={searchStrategy}
+                        value={searchStrategy || "greedy"}
                         onValueChange={setSearchStrategy}
                       >
                         <SelectTrigger id="strategy">
-                          <SelectValue />
+                          <SelectValue placeholder="Select strategy" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="greedy">Greedy</SelectItem>
@@ -354,11 +424,11 @@ export default function Mine() {
                     <div className="space-y-2">
                       <Label htmlFor="method">Sampling Method</Label>
                       <Select
-                        value={sampleMethod}
+                        value={sampleMethod || "tree"}
                         onValueChange={setSampleMethod}
                       >
                         <SelectTrigger id="method">
-                          <SelectValue />
+                          <SelectValue placeholder="Select method" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="tree">Tree</SelectItem>
@@ -370,11 +440,11 @@ export default function Mine() {
                     <div className="space-y-2">
                       <Label htmlFor="graph-type">Graph Type</Label>
                       <Select
-                        value={graphType}
+                        value={graphType || "directed"}
                         onValueChange={setGraphType}
                       >
                         <SelectTrigger id="graph-type">
-                          <SelectValue />
+                          <SelectValue placeholder="Select type" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="directed">Directed</SelectItem>
@@ -386,7 +456,7 @@ export default function Mine() {
                     <div className="space-y-2 md:col-span-2">
                       <Label htmlFor="format">Output Format</Label>
                       <Select
-                        value={outputFormat}
+                        value={outputFormat || "representative"}
                         onValueChange={setOutputFormat}
                       >
                         <SelectTrigger id="format">
