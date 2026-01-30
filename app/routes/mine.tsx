@@ -1,6 +1,6 @@
 import { json, type MetaFunction } from "@remix-run/node";
 import { useSearchParams, useNavigate } from "@remix-run/react";
-import React, { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { integrationAPI, annotationAPI, loaderAPI } from "~/api";
 import dayjs from "dayjs";
@@ -44,11 +44,11 @@ export default function Mine() {
   const [maxNeighborhoodSize, setMaxNeighborhoodSize] = useState("5");
   const [nNeighborhoods, setNNeighborhoods] = useState("500");
   const [nTrials, setNTrials] = useState("100");
+  const [outBatchSize, setOutBatchSize] = useState("3");
   const [searchStrategy, setSearchStrategy] = useState("greedy");
   const [sampleMethod, setSampleMethod] = useState("tree");
   const [graphType, setGraphType] = useState("directed");
   const [outputFormat, setOutputFormat] = useState("representative");
-  const [outBatchSize, setOutBatchSize] = useState("3");
 
   const [isMining, setIsMining] = useState(false);
   const [miningResult, setMiningResult] = useState<{
@@ -56,38 +56,14 @@ export default function Mine() {
     patternsCount?: number;
   } | null>(null);
 
-  // Progress state main bar + phase breakdown (sampling/embedding, trials, saving)
+  // Progress state
   const [miningProgress, setMiningProgress] = useState(0);
   const [miningStatus, setMiningStatus] = useState("Initializing...");
-  const [phaseProgress, setPhaseProgress] = useState<{
-    embedding: number;
-    search: number;
-    saving: number;
-  }>({ embedding: 0, search: 0, saving: 0 });
+  const [phaseDetail, setPhaseDetail] = useState<{ current: number; total: number; phase: string } | null>(null);
   const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
-
-  /** Apply progress payload from WebSocket or polling  */
-  const applyProgress = (data: {
-    progress?: number;
-    message?: string;
-    embedding_progress?: number;
-    search_progress?: number;
-    saving_progress?: number;
-  }) => {
-    if (data.progress !== undefined) setMiningProgress(data.progress);
-    if (data.message != null) setMiningStatus(data.message);
-    if (
-      data.embedding_progress !== undefined ||
-      data.search_progress !== undefined ||
-      data.saving_progress !== undefined
-    ) {
-      setPhaseProgress((prev) => ({
-        embedding: data.embedding_progress ?? prev.embedding,
-        search: data.search_progress ?? prev.search,
-        saving: data.saving_progress ?? prev.saving,
-      }));
-    }
-  };
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const completedShownRef = useRef(false);
+  const maxProgressSeenRef = useRef(0);
 
   // History State
   const [history, setHistory] = useState<any[]>([]);
@@ -157,6 +133,7 @@ export default function Mine() {
     try {
       setIsMining(true);
       setMiningResult(null);
+      completedShownRef.current = false;
 
       // Create FormData to send as body (required by FastAPI Form handling)
       const formData = new FormData();
@@ -167,11 +144,11 @@ export default function Mine() {
       formData.append("max_neighborhood_size", maxNeighborhoodSize);
       formData.append("n_neighborhoods", nNeighborhoods);
       formData.append("n_trials", nTrials);
+      formData.append("out_batch_size", outBatchSize);
       formData.append("search_strategy", searchStrategy);
       formData.append("sample_method", sampleMethod);
       formData.append("graph_type", graphType);
       formData.append("graph_output_format", outputFormat);
-      formData.append("out_batch_size", outBatchSize);
 
       // Call the Integration Service API with FormData
       const response = await integrationAPI.post("/api/mine-patterns", formData);
@@ -187,7 +164,7 @@ export default function Mine() {
         patternsCount: response.data.patterns_count
       });
 
-      toast.success("Mining completed successfully!");
+      if (!completedShownRef.current) toast.success("Mining completed successfully!");
 
     } catch (error: any) {
       console.error("Mining failed:", error);
@@ -196,102 +173,80 @@ export default function Mine() {
       });
     } finally {
       setIsMining(false);
+      // Stop polling
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        setPollInterval(null);
+      }
     }
   };
 
-  // Only render time-dependent content on the client
-  const [isMounted, setIsMounted] = useState(false);
+  // Poll for progress updates; when backend reports completed/100%, show result immediately so UI never stays stuck
   useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
-  // WebSocket for real-time progress updates with polling fallback
-  useEffect(() => {
-    let socket: WebSocket | null = null;
-    let fallbackInterval: NodeJS.Timeout | null = null;
+    let intervalId: NodeJS.Timeout | undefined;
 
     if (isMining && jobId) {
-      // Reset progress and phase breakdown
       setMiningProgress(0);
-      setMiningStatus("Connecting to miner...");
-      setPhaseProgress({ embedding: 0, search: 0, saving: 0 });
+      setMiningStatus("Starting miner...");
+      setPhaseDetail(null);
+      maxProgressSeenRef.current = 0;
 
-      const startPolling = () => {
-        if (fallbackInterval) return;
-        console.log("[WebSocket] Starting polling fallback");
-        fallbackInterval = setInterval(async () => {
-          try {
-            const res = await integrationAPI.get(`/api/mining-status/${jobId}`);
-            if (res.data) applyProgress(res.data);
-          } catch (e) {
-            console.warn("Polling failed", e);
-          }
-        }, 2000);
-      };
+      intervalId = setInterval(async () => {
+        try {
+          const res = await integrationAPI.get(`/api/mining-status/${jobId}`);
+          const data = res.data;
 
-      try {
-        // Construct WebSocket URL from integrationAPI baseURL
-        const baseUrl = integrationAPI.defaults.baseURL || "http://localhost:9000";
-        const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
-
-        // Handle both relative and absolute URLs
-        let wsUrl = baseUrl.startsWith('http')
-          ? baseUrl.replace(/^http/, wsProtocol)
-          : `${wsProtocol}://${window.location.host}${baseUrl}`;
-
-        // Ensure /api prefix if not present
-        if (!wsUrl.includes("/api")) {
-          wsUrl = wsUrl.replace(/\/$/, "") + "/api";
-        }
-        const finalUrl = `${wsUrl}/ws/mining-progress/${jobId}`;
-        console.log(`[WebSocket] Connecting to: ${finalUrl}`);
-
-        socket = new WebSocket(finalUrl);
-
-        socket.onopen = () => {
-          console.log("[WebSocket] Connection established");
-          setMiningStatus("Connected. Waiting for miner...");
-        };
-
-        socket.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            applyProgress(data);
-            if (data.status === 'completed' || data.progress >= 100) {
-              console.log("[WebSocket] Mining completed");
-              if (socket) socket.close();
+          if (data) {
+            const progress = Math.min(100, Math.max(0, Number(data.progress) ?? 0));
+            const prevMax = maxProgressSeenRef.current;
+            const newMax = Math.max(prevMax, progress);
+            maxProgressSeenRef.current = newMax;
+            setMiningProgress((prev) => Math.max(prev, progress));
+            if (progress >= prevMax - 0.5 && data.message != null) setMiningStatus(data.message);
+            if (progress >= prevMax - 0.5 && data.phases && typeof data.phases === "object") {
+              const phases = data.phases as Record<string, { current?: number; total?: number; percent?: number }>;
+              const search = phases.search_trials;
+              const sampling = phases.sampling;
+              const saving = phases.saving;
+              if (progress >= 95 && saving && typeof saving.current === "number" && typeof saving.total === "number") {
+                setPhaseDetail((prev) => (prev && prev.phase === "saving" && prev.current > saving.current! ? prev : { current: saving.current!, total: saving.total!, phase: "saving" }));
+              } else if (progress >= 20 && search && typeof search.current === "number" && typeof search.total === "number") {
+                setPhaseDetail((prev) => (prev && prev.phase === "search_trials" && prev.current > search.current! ? prev : { current: search.current!, total: search.total!, phase: "search_trials" }));
+              } else if (sampling && typeof sampling.current === "number" && typeof sampling.total === "number") {
+                setPhaseDetail((prev) => (prev && prev.phase === "sampling" && prev.current > sampling.current! ? prev : { current: sampling.current!, total: sampling.total!, phase: "sampling" }));
+              }
             }
-          } catch (err) {
-            console.warn("[WebSocket] Failed to parse message:", err);
-          }
-        };
 
-        socket.onerror = (error) => {
-          console.error("[WebSocket] Error:", error);
-          setMiningStatus("Connection error. Switching to polling...");
-          startPolling();
-        };
-
-        socket.onclose = (event) => {
-          console.log(`[WebSocket] Connection closed (code: ${event.code})`);
-          if (!event.wasClean && !fallbackInterval) {
-            startPolling();
+            // Backend is done (status completed or 100%) — unblock UI even if POST /mine-patterns hasn't returned
+            const completed = data.status === "completed" || progress >= 100;
+            if (completed && pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current);
+              pollIntervalRef.current = null;
+              setPollInterval(null);
+              setMiningProgress(100);
+              setMiningStatus(data.message || "Mining completed successfully!");
+              setMiningResult({
+                downloadUrl: `${integrationAPI.defaults.baseURL}/api/download-result?job_id=${jobId}`,
+                patternsCount: undefined,
+              });
+              setIsMining(false);
+              completedShownRef.current = true;
+              toast.success("Mining completed successfully!");
+            }
           }
-        };
-      } catch (err) {
-        console.error("[WebSocket] Initialization failed:", err);
-        startPolling();
-      }
+        } catch (e) {
+          console.warn("Failed to poll progress", e);
+        }
+      }, 250);
+
+      pollIntervalRef.current = intervalId;
+      setPollInterval(intervalId);
     }
 
     return () => {
-      if (socket) {
-        console.log("[WebSocket] Cleaning up WebSocket connection");
-        socket.close();
-      }
-      if (fallbackInterval) {
-        console.log("[WebSocket] Cleaning up polling fallback");
-        clearInterval(fallbackInterval);
+      if (intervalId) {
+        clearInterval(intervalId);
+        pollIntervalRef.current = null;
       }
     };
   }, [isMining, jobId]);
@@ -341,7 +296,7 @@ export default function Mine() {
                         {loadingHistory ? "Loading graph..." : graphDisplayName}
                       </p>
                       <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">
-                        {activeGraph ? (isMounted ? `Imported ${dayjs(activeGraph.imported_on).fromNow()}` : "Imported recently") : "Select a graph to start mining"}
+                        {activeGraph ? `Imported ${dayjs(activeGraph.imported_on).fromNow()}` : "Select a graph to start mining"}
                       </p>
                     </div>
                   </div>
@@ -425,15 +380,28 @@ export default function Mine() {
                         onChange={(e) => setNTrials(e.target.value)}
                       />
                     </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="out-batch-size">Output size (patterns per size)</Label>
+                      <Input
+                        id="out-batch-size"
+                        type="number"
+                        min={1}
+                        value={outBatchSize}
+                        onChange={(e) => setOutBatchSize(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Max number of patterns to keep for each pattern size (e.g. size 3, 4, 5).
+                      </p>
+                    </div>
 
                     <div className="space-y-2">
                       <Label htmlFor="strategy">Search Strategy</Label>
                       <Select
-                        value={searchStrategy || "greedy"}
+                        value={searchStrategy}
                         onValueChange={setSearchStrategy}
                       >
                         <SelectTrigger id="strategy">
-                          <SelectValue placeholder="Select strategy" />
+                          <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="greedy">Greedy</SelectItem>
@@ -444,11 +412,11 @@ export default function Mine() {
                     <div className="space-y-2">
                       <Label htmlFor="method">Sampling Method</Label>
                       <Select
-                        value={sampleMethod || "tree"}
+                        value={sampleMethod}
                         onValueChange={setSampleMethod}
                       >
                         <SelectTrigger id="method">
-                          <SelectValue placeholder="Select method" />
+                          <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="tree">Tree</SelectItem>
@@ -460,11 +428,11 @@ export default function Mine() {
                     <div className="space-y-2">
                       <Label htmlFor="graph-type">Graph Type</Label>
                       <Select
-                        value={graphType || "directed"}
+                        value={graphType}
                         onValueChange={setGraphType}
                       >
                         <SelectTrigger id="graph-type">
-                          <SelectValue placeholder="Select type" />
+                          <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="directed">Directed</SelectItem>
@@ -476,7 +444,7 @@ export default function Mine() {
                     <div className="space-y-2 md:col-span-2">
                       <Label htmlFor="format">Output Format</Label>
                       <Select
-                        value={outputFormat || "representative"}
+                        value={outputFormat}
                         onValueChange={setOutputFormat}
                       >
                         <SelectTrigger id="format">
@@ -487,21 +455,6 @@ export default function Mine() {
                           <SelectItem value="instance">Instances</SelectItem>
                         </SelectContent>
                       </Select>
-                    </div>
-
-                    <div className="space-y-2 md:col-span-2">
-                      <Label htmlFor="out-batch-size">Output Batch Size (Top K)</Label>
-                      <Input
-                        id="out-batch-size"
-                        type="number"
-                        min={1}
-                        value={outBatchSize}
-                        onChange={(e) => setOutBatchSize(e.target.value)}
-                        placeholder="10"
-                      />
-                      <p className="text-[10px] text-muted-foreground">
-                        Number of top patterns to return/visualize per size category.
-                      </p>
                     </div>
                   </div>
                 </AccordionContent>
@@ -533,57 +486,20 @@ export default function Mine() {
                     <div className="space-y-2">
                       <div className="w-full bg-secondary h-3 rounded-full overflow-hidden border border-border">
                         <div
-                          className="bg-green-600 h-full transition-all duration-500 ease-in-out shadow-[0_0_10px_rgba(22,163,74,0.5)]"
+                          className="bg-green-600 h-full transition-all duration-300 ease-out shadow-[0_0_10px_rgba(22,163,74,0.5)]"
                           style={{ width: `${miningProgress}%` }}
                         />
                       </div>
                       <p className="text-xs text-muted-foreground font-medium text-right font-mono tracking-tight">
                         {miningStatus}
                       </p>
-                      {/*  sampling/embedding, trials, saving */}
-                      <div className="pt-2 border-t border-border/60 space-y-1.5">
-                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                          Phase breakdown
+                      {phaseDetail && (
+                        <p className="text-xs text-foreground/70 font-mono">
+                          {phaseDetail.phase === "search_trials" && `${phaseDetail.current} of ${phaseDetail.total} trials`}
+                          {phaseDetail.phase === "sampling" && `${phaseDetail.current} of ${phaseDetail.total} neighborhoods`}
+                          {phaseDetail.phase === "saving" && `${phaseDetail.current} of ${phaseDetail.total} sizes`}
                         </p>
-                        <div className="grid grid-cols-3 gap-2">
-                          <div className="space-y-0.5">
-                            <div className="flex justify-between text-[10px] text-muted-foreground">
-                              <span>Sampling</span>
-                              <span>{phaseProgress.embedding}%</span>
-                            </div>
-                            <div className="w-full bg-secondary h-1.5 rounded-full overflow-hidden">
-                              <div
-                                className="bg-green-500/80 h-full transition-all duration-300"
-                                style={{ width: `${phaseProgress.embedding}%` }}
-                              />
-                            </div>
-                          </div>
-                          <div className="space-y-0.5">
-                            <div className="flex justify-between text-[10px] text-muted-foreground">
-                              <span>Trials</span>
-                              <span>{phaseProgress.search}%</span>
-                            </div>
-                            <div className="w-full bg-secondary h-1.5 rounded-full overflow-hidden">
-                              <div
-                                className="bg-green-600/90 h-full transition-all duration-300"
-                                style={{ width: `${phaseProgress.search}%` }}
-                              />
-                            </div>
-                          </div>
-                          <div className="space-y-0.5">
-                            <div className="flex justify-between text-[10px] text-muted-foreground">
-                              <span>Saving</span>
-                              <span>{phaseProgress.saving}%</span>
-                            </div>
-                            <div className="w-full bg-secondary h-1.5 rounded-full overflow-hidden">
-                              <div
-                                className="bg-green-700/90 h-full transition-all duration-300"
-                                style={{ width: `${phaseProgress.saving}%` }}
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                      )}
                     </div>
                   </div>
                 </CardContent>
