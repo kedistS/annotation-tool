@@ -208,12 +208,18 @@ export default function Mine() {
               const search = phases.search_trials;
               const sampling = phases.sampling;
               const saving = phases.saving;
-              if (progress >= 95 && saving && typeof saving.current === "number" && typeof saving.total === "number") {
+              if (progress < 20) {
+                if (sampling && typeof sampling.current === "number" && typeof sampling.total === "number" && Number(sampling.total) > 1) {
+                  setPhaseDetail((prev) => (prev && prev.phase === "sampling" && prev.current > sampling.current! ? prev : { current: sampling.current!, total: sampling.total!, phase: "sampling" }));
+                } else {
+                  setPhaseDetail(null);
+                }
+              } else if (progress >= 20 && progress < 95 && search && Number(search.total) <= 1) {
+                setPhaseDetail(null);
+              } else if (progress >= 95 && saving && typeof saving.current === "number" && typeof saving.total === "number") {
                 setPhaseDetail((prev) => (prev && prev.phase === "saving" && prev.current > saving.current! ? prev : { current: saving.current!, total: saving.total!, phase: "saving" }));
-              } else if (progress >= 20 && search && typeof search.current === "number" && typeof search.total === "number") {
+              } else if (progress >= 20 && search && typeof search.current === "number" && typeof search.total === "number" && Number(search.total) > 1) {
                 setPhaseDetail((prev) => (prev && prev.phase === "search_trials" && prev.current > search.current! ? prev : { current: search.current!, total: search.total!, phase: "search_trials" }));
-              } else if (sampling && typeof sampling.current === "number" && typeof sampling.total === "number") {
-                setPhaseDetail((prev) => (prev && prev.phase === "sampling" && prev.current > sampling.current! ? prev : { current: sampling.current!, total: sampling.total!, phase: "sampling" }));
               }
             }
 
@@ -493,7 +499,7 @@ export default function Mine() {
                       <p className="text-xs text-muted-foreground font-medium text-right font-mono tracking-tight">
                         {miningStatus}
                       </p>
-                      {phaseDetail && (
+                      {phaseDetail && Number(phaseDetail.total) > 1 && !(phaseDetail.phase === "search_trials" && phaseDetail.current === 0 && Number(phaseDetail.total) === 1) && (phaseDetail.phase !== "search_trials" || !String(miningStatus).toLowerCase().includes("sampling")) && (
                         <p className="text-xs text-foreground/70 font-mono">
                           {phaseDetail.phase === "search_trials" && `${phaseDetail.current} of ${phaseDetail.total} trials`}
                           {phaseDetail.phase === "sampling" && `${phaseDetail.current} of ${phaseDetail.total} neighborhoods`}
