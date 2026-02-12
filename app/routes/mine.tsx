@@ -462,13 +462,6 @@ export default function Mine() {
                         </SelectContent>
                       </Select>
                     </div>
-
-                    <div className="md:col-span-2 p-3 rounded-lg bg-muted/50 border border-border/50 font-mono text-xs">
-                      <p className="font-semibold text-foreground/80 mb-1">Config that will be sent</p>
-                      <p className="text-muted-foreground">
-                        Pattern size: {minPatternSize || "3"}–{maxPatternSize || "5"} · Output size: {outBatchSize || "3"} per size · Format: {outputFormat === "instance" ? "Instances" : "Representative"} · Trials: {nTrials || "100"} · Neighborhoods: {nNeighborhoods || "500"}
-                      </p>
-                    </div>
                   </div>
                 </AccordionContent>
               </AccordionItem>
