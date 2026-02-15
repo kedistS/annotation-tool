@@ -1,6 +1,6 @@
 import { json, type MetaFunction } from "@remix-run/node";
 import { useSearchParams, useNavigate } from "@remix-run/react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { integrationAPI, annotationAPI, loaderAPI } from "~/api";
 import dayjs from "dayjs";
@@ -44,6 +44,7 @@ export default function Mine() {
   const [maxNeighborhoodSize, setMaxNeighborhoodSize] = useState("5");
   const [nNeighborhoods, setNNeighborhoods] = useState("500");
   const [nTrials, setNTrials] = useState("100");
+  const [outBatchSize, setOutBatchSize] = useState("3");
   const [searchStrategy, setSearchStrategy] = useState("greedy");
   const [sampleMethod, setSampleMethod] = useState("tree");
   const [graphType, setGraphType] = useState("directed");
@@ -55,10 +56,14 @@ export default function Mine() {
     patternsCount?: number;
   } | null>(null);
 
-  // New Progress State
+  // Progress state
   const [miningProgress, setMiningProgress] = useState(0);
   const [miningStatus, setMiningStatus] = useState("Initializing...");
+  const [phaseDetail, setPhaseDetail] = useState<{ current: number; total: number; phase: string } | null>(null);
   const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const completedShownRef = useRef(false);
+  const maxProgressSeenRef = useRef(0);
 
   // History State
   const [history, setHistory] = useState<any[]>([]);
@@ -128,20 +133,22 @@ export default function Mine() {
     try {
       setIsMining(true);
       setMiningResult(null);
+      completedShownRef.current = false;
 
-      // Create FormData to send as body (required by FastAPI Form handling)
+      // Build form from current state so backend gets exactly what the user configured
       const formData = new FormData();
       formData.append("job_id", jobId);
-      formData.append("min_pattern_size", minPatternSize);
-      formData.append("max_pattern_size", maxPatternSize);
-      formData.append("min_neighborhood_size", minNeighborhoodSize);
-      formData.append("max_neighborhood_size", maxNeighborhoodSize);
-      formData.append("n_neighborhoods", nNeighborhoods);
-      formData.append("n_trials", nTrials);
-      formData.append("search_strategy", searchStrategy);
-      formData.append("sample_method", sampleMethod);
-      formData.append("graph_type", graphType);
-      formData.append("graph_output_format", outputFormat);
+      formData.append("min_pattern_size", String(minPatternSize).trim() || "3");
+      formData.append("max_pattern_size", String(maxPatternSize).trim() || "5");
+      formData.append("min_neighborhood_size", String(minNeighborhoodSize).trim() || "3");
+      formData.append("max_neighborhood_size", String(maxNeighborhoodSize).trim() || "5");
+      formData.append("n_neighborhoods", String(nNeighborhoods).trim() || "500");
+      formData.append("n_trials", String(nTrials).trim() || "100");
+      formData.append("out_batch_size", String(outBatchSize).trim() || "3");
+      formData.append("search_strategy", searchStrategy || "greedy");
+      formData.append("sample_method", sampleMethod || "tree");
+      formData.append("graph_type", graphType || "directed");
+      formData.append("graph_output_format", outputFormat || "representative");
 
       // Call the Integration Service API with FormData
       const response = await integrationAPI.post("/api/mine-patterns", formData);
@@ -157,7 +164,7 @@ export default function Mine() {
         patternsCount: response.data.patterns_count
       });
 
-      toast.success("Mining completed successfully!");
+      if (!completedShownRef.current) toast.success("Mining completed successfully!");
 
     } catch (error: any) {
       console.error("Mining failed:", error);
@@ -174,35 +181,79 @@ export default function Mine() {
     }
   };
 
-  // Poll for progress updates
+  // Poll for progress updates; when backend reports completed/100%, show result immediately so UI never stays stuck
   useEffect(() => {
-    let intervalId: NodeJS.Timeout;
+    let intervalId: NodeJS.Timeout | undefined;
 
     if (isMining && jobId) {
-      // Reset progress
       setMiningProgress(0);
       setMiningStatus("Starting miner...");
+      setPhaseDetail(null);
+      maxProgressSeenRef.current = 0;
 
       intervalId = setInterval(async () => {
         try {
-          //  accessing Integration Service via integrationAPI (Loader URL)
           const res = await integrationAPI.get(`/api/mining-status/${jobId}`);
           const data = res.data;
 
           if (data) {
-            setMiningProgress(data.progress || 0);
-            if (data.message) setMiningStatus(data.message);
+            const progress = Math.min(100, Math.max(0, Number(data.progress) ?? 0));
+            const prevMax = maxProgressSeenRef.current;
+            const newMax = Math.max(prevMax, progress);
+            maxProgressSeenRef.current = newMax;
+            setMiningProgress((prev) => Math.max(prev, progress));
+            if (progress >= prevMax - 0.5 && data.message != null) setMiningStatus(data.message);
+            if (progress >= prevMax - 0.5 && data.phases && typeof data.phases === "object") {
+              const phases = data.phases as Record<string, { current?: number; total?: number; percent?: number }>;
+              const search = phases.search_trials;
+              const sampling = phases.sampling;
+              const saving = phases.saving;
+              if (progress < 20) {
+                if (sampling && typeof sampling.current === "number" && typeof sampling.total === "number" && Number(sampling.total) > 1) {
+                  setPhaseDetail((prev) => (prev && prev.phase === "sampling" && prev.current > sampling.current! ? prev : { current: sampling.current!, total: sampling.total!, phase: "sampling" }));
+                } else {
+                  setPhaseDetail(null);
+                }
+              } else if (progress >= 20 && progress < 95 && search && Number(search.total) <= 1) {
+                setPhaseDetail(null);
+              } else if (progress >= 95 && saving && typeof saving.current === "number" && typeof saving.total === "number") {
+                setPhaseDetail((prev) => (prev && prev.phase === "saving" && prev.current > saving.current! ? prev : { current: saving.current!, total: saving.total!, phase: "saving" }));
+              } else if (progress >= 20 && search && typeof search.current === "number" && typeof search.total === "number" && Number(search.total) > 1) {
+                setPhaseDetail((prev) => (prev && prev.phase === "search_trials" && prev.current > search.current! ? prev : { current: search.current!, total: search.total!, phase: "search_trials" }));
+              }
+            }
+
+            // Backend is done (status completed or 100%) — unblock UI even if POST /mine-patterns hasn't returned
+            const completed = data.status === "completed" || progress >= 100;
+            if (completed && pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current);
+              pollIntervalRef.current = null;
+              setPollInterval(null);
+              setMiningProgress(100);
+              setMiningStatus(data.message || "Mining completed successfully!");
+              setMiningResult({
+                downloadUrl: `${integrationAPI.defaults.baseURL}/api/download-result?job_id=${jobId}`,
+                patternsCount: undefined,
+              });
+              setIsMining(false);
+              completedShownRef.current = true;
+              toast.success("Mining completed successfully!");
+            }
           }
         } catch (e) {
           console.warn("Failed to poll progress", e);
         }
-      }, 1000);
+      }, 250);
 
+      pollIntervalRef.current = intervalId;
       setPollInterval(intervalId);
     }
 
     return () => {
-      if (intervalId) clearInterval(intervalId);
+      if (intervalId) {
+        clearInterval(intervalId);
+        pollIntervalRef.current = null;
+      }
     };
   }, [isMining, jobId]);
 
@@ -335,6 +386,19 @@ export default function Mine() {
                         onChange={(e) => setNTrials(e.target.value)}
                       />
                     </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="out-batch-size">Output size (patterns per size)</Label>
+                      <Input
+                        id="out-batch-size"
+                        type="number"
+                        min={1}
+                        value={outBatchSize}
+                        onChange={(e) => setOutBatchSize(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Max number of patterns to keep for each pattern size (e.g. size 3, 4, 5).
+                      </p>
+                    </div>
 
                     <div className="space-y-2">
                       <Label htmlFor="strategy">Search Strategy</Label>
@@ -428,13 +492,20 @@ export default function Mine() {
                     <div className="space-y-2">
                       <div className="w-full bg-secondary h-3 rounded-full overflow-hidden border border-border">
                         <div
-                          className="bg-green-600 h-full transition-all duration-500 ease-in-out shadow-[0_0_10px_rgba(22,163,74,0.5)]"
+                          className="bg-green-600 h-full transition-all duration-300 ease-out shadow-[0_0_10px_rgba(22,163,74,0.5)]"
                           style={{ width: `${miningProgress}%` }}
                         />
                       </div>
                       <p className="text-xs text-muted-foreground font-medium text-right font-mono tracking-tight">
                         {miningStatus}
                       </p>
+                      {phaseDetail && Number(phaseDetail.total) > 1 && !(phaseDetail.phase === "search_trials" && phaseDetail.current === 0 && Number(phaseDetail.total) === 1) && (phaseDetail.phase !== "search_trials" || !String(miningStatus).toLowerCase().includes("sampling")) && (
+                        <p className="text-xs text-foreground/70 font-mono">
+                          {phaseDetail.phase === "search_trials" && `${phaseDetail.current} of ${phaseDetail.total} trials`}
+                          {phaseDetail.phase === "sampling" && `${phaseDetail.current} of ${phaseDetail.total} neighborhoods`}
+                          {phaseDetail.phase === "saving" && `${phaseDetail.current} of ${phaseDetail.total} sizes`}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </CardContent>
