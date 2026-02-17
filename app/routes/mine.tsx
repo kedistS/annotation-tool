@@ -52,7 +52,7 @@ export default function Mine() {
 
   const [isMining, setIsMining] = useState(false);
   const [miningResult, setMiningResult] = useState<{
-    downloadUrl: string;
+    completedJobId: string;
     patternsCount?: number;
   } | null>(null);
 
@@ -69,6 +69,17 @@ export default function Mine() {
   const [history, setHistory] = useState<any[]>([]);
 
   const [loadingHistory, setLoadingHistory] = useState(true);
+
+  /**
+   * Build the download URL at click time — only ever runs in the browser,
+   * so window.ENV is always available. No SSR mismatch possible.
+   */
+  const handleDownload = () => {
+    if (!miningResult?.completedJobId) return;
+    const baseUrl = window.ENV?.INTEGRATION_URL || "http://localhost:9000";
+    const url = `${baseUrl}/api/download-result?job_id=${miningResult.completedJobId}`;
+    window.open(url, '_blank');
+  };
 
   useEffect(() => {
     const initData = async () => {
@@ -153,14 +164,8 @@ export default function Mine() {
       // Call the Integration Service API with FormData
       const response = await integrationAPI.post("/api/mine-patterns", formData);
 
-      // Construct download URL - using the new /download-result endpoint logic if possible
-      // Assuming backend returns relative path or we construct standard path
-      // If response.data.download_url is missing, fallback to standard pattern
-      const downloadLink = response.data.download_url ||
-        `${integrationAPI.defaults.baseURL}/api/download-result?job_id=${jobId}`;
-
       setMiningResult({
-        downloadUrl: downloadLink,
+        completedJobId: response.data.job_id || jobId,
         patternsCount: response.data.patterns_count
       });
 
@@ -232,7 +237,7 @@ export default function Mine() {
               setMiningProgress(100);
               setMiningStatus(data.message || "Mining completed successfully!");
               setMiningResult({
-                downloadUrl: `${integrationAPI.defaults.baseURL}/api/download-result?job_id=${jobId}`,
+                completedJobId: jobId,
                 patternsCount: undefined,
               });
               setIsMining(false);
@@ -534,7 +539,7 @@ export default function Mine() {
                 </div>
                 <Button
                   className="w-full md:w-auto bg-green-600 hover:bg-green-700 text-white"
-                  onClick={() => window.open(miningResult.downloadUrl, '_blank')}
+                  onClick={handleDownload}
                 >
                   <Download className="mr-2 h-4 w-4" /> Download Results (ZIP)
                 </Button>
